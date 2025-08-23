@@ -1,0 +1,14 @@
+[Unit]
+Description=Gensyn Node Auto Restart Service
+Wants=gensyn-restart.timer
+
+[Service]
+Type=oneshot
+User=root
+WorkingDirectory=/root
+ExecStart=/root/gensyn-auto-restart.sh
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target
