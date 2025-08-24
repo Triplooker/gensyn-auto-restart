@@ -100,7 +100,7 @@ except Exception as e:
     print(f'Ошибка настройки модели: {e}')
 " 2>&1 | while read line; do log "$line"; done
 
-# Запускаем в screen с улучшенной проверкой
+# Запускаем в screen с упрощенным подходом
 log "Запускаем ноду в screen сессии..."
 cd rl-swarm
 
@@ -111,23 +111,32 @@ if [ ! -f "./run_rl_swarm.sh" ]; then
     exit 1
 fi
 
-# Создаем screen сессию с детальным логированием
+# Создаем более простую screen сессию без set -e
 log "Создаем screen сессию gensyn..."
 screen -S gensyn -dm bash -c "
-set -e
-export PATH='$PATH'
-export HOME='$HOME'
-echo 'Начинаем настройку виртуального окружения...' >> /var/log/gensyn-restart.log 2>&1
-python3 -m venv .venv 2>&1 || echo 'Ошибка создания venv' >> /var/log/gensyn-restart.log
-echo 'Активируем виртуальное окружение...' >> /var/log/gensyn-restart.log 2>&1
-source .venv/bin/activate 2>&1 || echo 'Ошибка активации venv' >> /var/log/gensyn-restart.log
-echo 'Запускаем run_rl_swarm.sh...' >> /var/log/gensyn-restart.log 2>&1
-exec ./run_rl_swarm.sh 2>&1
+cd /root/rl-swarm
+export PATH='/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin'
+export HOME='/root'
+echo 'Начинаем настройку виртуального окружения...' >> /var/log/gensyn-restart.log
+if python3 -m venv .venv; then
+    echo 'Виртуальное окружение создано' >> /var/log/gensyn-restart.log
+    if source .venv/bin/activate; then
+        echo 'Виртуальное окружение активировано' >> /var/log/gensyn-restart.log
+        echo 'Запускаем run_rl_swarm.sh...' >> /var/log/gensyn-restart.log
+        exec ./run_rl_swarm.sh
+    else
+        echo 'Ошибка активации venv' >> /var/log/gensyn-restart.log
+        exit 1
+    fi
+else
+    echo 'Ошибка создания venv' >> /var/log/gensyn-restart.log
+    exit 1
+fi
 "
 
 # Даем время на запуск
-log "Ожидаем запуска ноды (20 секунд)..."
-sleep 20
+log "Ожидаем запуска ноды (25 секунд)..."
+sleep 25
 
 # Проверяем результат с несколькими попытками
 success=false
@@ -143,6 +152,11 @@ for attempt in 1 2 3; do
         sleep 5
     else
         log "❌ Screen сессия gensyn не найдена"
+        # Проверяем есть ли информация в логе
+        recent_logs=$(tail -5 /var/log/gensyn-restart.log | grep -E "(создано|активировано|Запускаем|Ошибка)" || echo "")
+        if [ -n "$recent_logs" ]; then
+            log "Последние этапы: $recent_logs"
+        fi
         sleep 5
     fi
 done
@@ -150,11 +164,8 @@ done
 if [ "$success" = true ]; then
     log "✅ Нода перезапущена успешно"
 else
-    log "❌ Ошибка запуска - проверьте логи screen сессии"
-    # Пытаемся получить дополнительную информацию
-    if screen -list | grep -q gensyn; then
-        log "Screen сессия существует, но возможны проблемы с запуском процесса"
-    fi
+    log "❌ Ошибка запуска - screen сессия не найдена или завершилась"
+    log "💡 Попробуйте запустить диагностику: wget -qO- https://raw.githubusercontent.com/Triplooker/gensyn-auto-restart/master/debug-script.sh | bash"
 fi
 
 log "=== Завершение перезапуска ==="
