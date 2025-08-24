@@ -100,43 +100,49 @@ except Exception as e:
     print(f'Ошибка настройки модели: {e}')
 " 2>&1 | while read line; do log "$line"; done
 
-# Запускаем в screen с упрощенным подходом
-log "Запускаем ноду в screen сессии..."
+# ИСПРАВЛЯЕМ run_rl_swarm.sh для совместимости 
+log "Исправляем run_rl_swarm.sh для совместимости..."
 cd rl-swarm
 
-# Проверяем что мы находимся в правильной директории
-if [ ! -f "./run_rl_swarm.sh" ]; then
-    log "❌ Файл run_rl_swarm.sh не найден в $(pwd)"
+# Создаем исправленную версию с npm вместо yarn и без strict режима
+sed 's/yarn install/npm install/g; s/yarn build/npm run build/g; s/yarn start/npm start/g; s/set -euo pipefail/# set -euo pipefail (disabled for compatibility)/' run_rl_swarm.sh > run_rl_swarm_fixed.sh
+chmod +x run_rl_swarm_fixed.sh
+
+# Проверяем что файл создался
+if [ ! -f "./run_rl_swarm_fixed.sh" ]; then
+    log "❌ Файл run_rl_swarm_fixed.sh не создался"
     log "=== Завершение с ошибкой ==="
     exit 1
 fi
 
-# Создаем более простую screen сессию без set -e
-log "Создаем screen сессию gensyn..."
+# Запускаем в screen с исправленным скриптом
+log "Создаем screen сессию gensyn с исправленным скриптом..."
 screen -S gensyn -dm bash -c "
 cd /root/rl-swarm
-export PATH='/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin'
+export PATH='/root/.nvm/versions/node/v24.1.0/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin'
 export HOME='/root'
-echo 'Начинаем настройку виртуального окружения...' >> /var/log/gensyn-restart.log
+echo 'Начинаем настройку виртуального окружения...' >> /var/log/gensyn-restart.log 2>&1
 if python3 -m venv .venv; then
-    echo 'Виртуальное окружение создано' >> /var/log/gensyn-restart.log
+    echo 'Виртуальное окружение создано' >> /var/log/gensyn-restart.log 2>&1
     if source .venv/bin/activate; then
-        echo 'Виртуальное окружение активировано' >> /var/log/gensyn-restart.log
-        echo 'Запускаем run_rl_swarm.sh...' >> /var/log/gensyn-restart.log
-        exec ./run_rl_swarm.sh
+        echo 'Виртуальное окружение активировано' >> /var/log/gensyn-restart.log 2>&1
+        echo \"Node version: \$(node --version)\" >> /var/log/gensyn-restart.log 2>&1
+        echo \"NPM version: \$(npm --version)\" >> /var/log/gensyn-restart.log 2>&1
+        echo 'Запускаем исправленный run_rl_swarm.sh с npm...' >> /var/log/gensyn-restart.log 2>&1
+        exec ./run_rl_swarm_fixed.sh
     else
-        echo 'Ошибка активации venv' >> /var/log/gensyn-restart.log
+        echo 'Ошибка активации venv' >> /var/log/gensyn-restart.log 2>&1
         exit 1
     fi
 else
-    echo 'Ошибка создания venv' >> /var/log/gensyn-restart.log
+    echo 'Ошибка создания venv' >> /var/log/gensyn-restart.log 2>&1
     exit 1
 fi
 "
 
-# Даем время на запуск
-log "Ожидаем запуска ноды (25 секунд)..."
-sleep 25
+# Даем время на запуск (больше времени так как npm install может быть медленным)
+log "Ожидаем запуска ноды (45 секунд)..."
+sleep 45
 
 # Проверяем результат с несколькими попытками
 success=false
@@ -149,23 +155,23 @@ for attempt in 1 2 3; do
         break
     elif screen -list | grep -q gensyn; then
         log "⚠️ Screen сессия найдена, но возможно не полностью запущена"
-        sleep 5
+        sleep 15
     else
         log "❌ Screen сессия gensyn не найдена"
         # Проверяем есть ли информация в логе
-        recent_logs=$(tail -5 /var/log/gensyn-restart.log | grep -E "(создано|активировано|Запускаем|Ошибка)" || echo "")
+        recent_logs=$(tail -8 /var/log/gensyn-restart.log | grep -E "(создано|активировано|Запускаем|Ошибка|version)" || echo "")
         if [ -n "$recent_logs" ]; then
             log "Последние этапы: $recent_logs"
         fi
-        sleep 5
+        sleep 15
     fi
 done
 
 if [ "$success" = true ]; then
-    log "✅ Нода перезапущена успешно"
+    log "✅ Нода перезапущена успешно (использует npm вместо yarn)"
 else
     log "❌ Ошибка запуска - screen сессия не найдена или завершилась"
-    log "💡 Попробуйте запустить диагностику: wget -qO- https://raw.githubusercontent.com/Triplooker/gensyn-auto-restart/master/debug-script.sh | bash"
+    log "💡 Попробуйте: screen -r gensyn для подключения или /root/gensyn-status.sh для диагностики"
 fi
 
 log "=== Завершение перезапуска ==="
